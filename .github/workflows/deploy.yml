@@ -1,0 +1,67 @@
+name: Build and Deploy CalSync to Azure
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22.x'
+  AZURE_WEBAPP_NAME: calsync-crusolve
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build
+        env:
+          NEXT_PUBLIC_AZURE_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_AZURE_CLIENT_ID }}
+          NEXT_PUBLIC_AZURE_TENANT_ID: ${{ secrets.NEXT_PUBLIC_AZURE_TENANT_ID }}
+          NEXT_PUBLIC_REDIRECT_URI: https://calsync-crusolve.azurewebsites.net
+          NEXT_PUBLIC_APP_URL: https://calsync-crusolve.azurewebsites.net
+
+      - name: Create deployment package
+        run: |
+          cp package.json .next/standalone/
+          cp -r public .next/standalone/public 2>/dev/null || true
+          cp -r .next/static .next/standalone/.next/static
+          cd .next/standalone && zip -r ../../deploy.zip . -x "*.map"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calsync-build
+          path: deploy.zip
+          retention-days: 1
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: production
+      url: https://calsync-crusolve.azurewebsites.net
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: calsync-build
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
+          package: deploy.zip
