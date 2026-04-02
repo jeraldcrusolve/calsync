@@ -1,11 +1,11 @@
 import path from 'path';
 import fs from 'fs';
-import { fetchBusySlots } from './bookingReader';
+import { parseIcsContent, BusySlot } from './bookingReader';
 import { getExistingEvents, createCalendarEvent } from './graphClient';
 import { insertSyncLog } from './db';
 
 interface SyncConfig {
-  bookingUrl: string;
+  icsContent?: string;
   accessToken: string;
 }
 
@@ -29,7 +29,7 @@ export function loadSyncConfig(): SyncConfig | null {
   }
 }
 
-export async function runSync(bookingUrl: string, accessToken: string): Promise<{
+export async function runSync(slots: BusySlot[], accessToken: string): Promise<{
   slotsFound: number;
   slotsCreated: number;
   errors: string[];
@@ -39,7 +39,7 @@ export async function runSync(bookingUrl: string, accessToken: string): Promise<
   let slotsCreated = 0;
 
   try {
-    const busySlots = await fetchBusySlots(bookingUrl);
+    const busySlots = slots;
     slotsFound = busySlots.length;
 
     const now = new Date();
@@ -68,7 +68,7 @@ export async function runSync(bookingUrl: string, accessToken: string): Promise<
 
     insertSyncLog({
       timestamp: new Date().toISOString(),
-      booking_url: bookingUrl,
+      booking_url: 'ics-upload',
       slots_found: slotsFound,
       slots_created: slotsCreated,
       status: 'success',
@@ -79,7 +79,7 @@ export async function runSync(bookingUrl: string, accessToken: string): Promise<
     errors.push(errorMessage);
     insertSyncLog({
       timestamp: new Date().toISOString(),
-      booking_url: bookingUrl,
+      booking_url: 'ics-upload',
       slots_found: slotsFound,
       slots_created: slotsCreated,
       status: 'error',
@@ -103,10 +103,11 @@ export function startCronJob(): void {
   const cron = require('node-cron');
   cron.schedule('0 * * * *', async () => {
     const config = loadSyncConfig();
-    if (!config) return;
+    if (!config || !config.icsContent) return;
 
     try {
-      await runSync(config.bookingUrl, config.accessToken);
+      const slots = parseIcsContent(config.icsContent);
+      await runSync(slots, config.accessToken);
     } catch {
       // Silent fail - logged in runSync
     }

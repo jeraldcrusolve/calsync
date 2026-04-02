@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { addDays, formatISO } from 'date-fns';
+import * as ical from 'node-ical';
 
 export interface BusySlot {
   start: string;
@@ -7,86 +6,36 @@ export interface BusySlot {
   subject: string;
 }
 
-export function parseEmailFromBookingUrl(bookingUrl: string): string | null {
-  try {
-    const match = bookingUrl.match(/\/bookwithme\/user\/([^?/]+)/);
-    if (!match) return null;
-    const decoded = decodeURIComponent(match[1]);
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchBusySlots(bookingUrl: string): Promise<BusySlot[]> {
-  const userEmail = parseEmailFromBookingUrl(bookingUrl);
-  if (!userEmail) {
-    return generateMockSlots();
-  }
-
-  const now = new Date();
-  const twoWeeksLater = addDays(now, 14);
-  const startTime = formatISO(now);
-  const endTime = formatISO(twoWeeksLater);
-
-  try {
-    const response = await axios.get(
-      `https://outlook.office.com/bookwithme/api/booking/user/${encodeURIComponent(userEmail)}/slots`,
-      {
-        params: { startTime, endTime },
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }
-    );
-
-    if (response.data && Array.isArray(response.data)) {
-      return response.data.map((slot: { start?: string; startTime?: string; end?: string; endTime?: string; subject?: string; title?: string }) => ({
-        start: slot.start || slot.startTime || '',
-        end: slot.end || slot.endTime || '',
-        subject: slot.subject || slot.title || 'Busy',
-      }));
-    }
-
-    return generateMockSlots();
-  } catch {
-    return generateMockSlots();
-  }
-}
-
-function generateMockSlots(): BusySlot[] {
+export function parseIcsContent(icsContent: string): BusySlot[] {
   const slots: BusySlot[] = [];
-  const now = new Date();
 
-  for (let day = 1; day <= 14; day++) {
-    const date = addDays(now, day);
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+  try {
+    const parsed = ical.parseICS(icsContent);
 
-    const morningSlot = new Date(date);
-    morningSlot.setHours(9, 0, 0, 0);
-    const morningEnd = new Date(date);
-    morningEnd.setHours(10, 0, 0, 0);
-    slots.push({
-      start: morningSlot.toISOString(),
-      end: morningEnd.toISOString(),
-      subject: 'Booking',
-    });
+    for (const key in parsed) {
+      const event = parsed[key];
+      if (!event || event.type !== 'VEVENT') continue;
 
-    if (day % 3 === 0) {
-      const afternoonSlot = new Date(date);
-      afternoonSlot.setHours(14, 0, 0, 0);
-      const afternoonEnd = new Date(date);
-      afternoonEnd.setHours(15, 0, 0, 0);
+      const start = event.start;
+      const end = event.end;
+      if (!start || !end) continue;
+
+      // Skip all-day events (Date objects without time)
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) continue;
+
       slots.push({
-        start: afternoonSlot.toISOString(),
-        end: afternoonEnd.toISOString(),
-        subject: 'Booking',
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        subject: (event.summary as string) || 'Busy',
       });
     }
+  } catch {
+    throw new Error('Failed to parse ICS file. Please ensure it is a valid iCalendar (.ics) file.');
   }
 
+  // Sort chronologically
+  slots.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   return slots;
 }

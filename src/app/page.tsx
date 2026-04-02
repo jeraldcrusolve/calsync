@@ -5,6 +5,7 @@ import SourceCard from '@/components/SourceCard';
 import TargetCard from '@/components/TargetCard';
 import SyncStatus from '@/components/SyncStatus';
 import LogsTable from '@/components/LogsTable';
+import { BusySlot } from '@/lib/bookingReader';
 
 interface UserInfo {
   displayName: string;
@@ -22,12 +23,8 @@ interface SyncLog {
   error_message: string | null;
 }
 
-const DEFAULT_BOOKING_URL =
-  'https://outlook.office.com/bookwithme/user/6345d0556734457bac629556cfb2abc4%40microsoft.com?anonymous&ismsaljsauthenabled=true';
-
 export default function Home() {
-  const [bookingUrl, setBookingUrl] = useState(DEFAULT_BOOKING_URL);
-  const [isSourceConnected, setIsSourceConnected] = useState(false);
+  const [sourceSlots, setSourceSlots] = useState<BusySlot[]>([]);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -51,36 +48,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const savedUrl = localStorage.getItem('bookingUrl');
-    if (savedUrl) {
-      setBookingUrl(savedUrl);
-      setIsSourceConnected(true);
-    }
-
     const savedToken = sessionStorage.getItem('accessToken');
     const savedUserInfo = sessionStorage.getItem('userInfo');
-    if (savedToken) {
-      setAccessToken(savedToken);
-    }
+    if (savedToken) setAccessToken(savedToken);
     if (savedUserInfo) {
-      try {
-        setUserInfo(JSON.parse(savedUserInfo) as UserInfo);
-      } catch {
-        // ignore
-      }
+      try { setUserInfo(JSON.parse(savedUserInfo) as UserInfo); } catch { /* ignore */ }
     }
-
     fetchLogs();
   }, [fetchLogs]);
-
-  const handleBookingUrlChange = (url: string) => {
-    setBookingUrl(url);
-  };
-
-  const handleSourceConnect = () => {
-    localStorage.setItem('bookingUrl', bookingUrl);
-    setIsSourceConnected(true);
-  };
 
   const handleAccessTokenChange = async (token: string | null) => {
     setAccessToken(token);
@@ -93,9 +68,7 @@ export default function Home() {
         const user = await res.json() as UserInfo;
         setUserInfo(user);
         sessionStorage.setItem('userInfo', JSON.stringify(user));
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     } else {
       setUserInfo(null);
       sessionStorage.removeItem('accessToken');
@@ -104,25 +77,21 @@ export default function Home() {
   };
 
   const handleSyncNow = async () => {
-    if (!bookingUrl || !accessToken) return;
+    if (!sourceSlots.length || !accessToken) return;
     setIsSyncing(true);
-
     try {
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingUrl, accessToken }),
+        body: JSON.stringify({ slots: sourceSlots, accessToken }),
       });
       await res.json();
       await fetchLogs();
-    } catch {
-      // Silent fail - error is logged
-    } finally {
-      setIsSyncing(false);
-    }
+    } catch { /* Silent fail */ }
+    finally { setIsSyncing(false); }
   };
 
-  const isReady = isSourceConnected && !!accessToken;
+  const isReady = sourceSlots.length > 0 && !!accessToken;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
@@ -144,12 +113,7 @@ export default function Home() {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         <div className="flex gap-6">
-          <SourceCard
-            bookingUrl={bookingUrl}
-            onBookingUrlChange={handleBookingUrlChange}
-            isConnected={isSourceConnected}
-            onConnect={handleSourceConnect}
-          />
+          <SourceCard slots={sourceSlots} onSlotsLoaded={setSourceSlots} />
           <TargetCard
             onAccessTokenChange={handleAccessTokenChange}
             isConnected={!!accessToken}
