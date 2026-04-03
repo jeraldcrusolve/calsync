@@ -34,9 +34,10 @@ jobs:
 
       - name: Create deployment package
         run: |
-          cp package.json .next/standalone/
           cp -r public .next/standalone/public 2>/dev/null || true
           cp -r .next/static .next/standalone/.next/static
+          # Ensure package.json has correct start script for Azure
+          echo '{"name":"calsync","version":"0.1.0","scripts":{"start":"node server.js"}}' > .next/standalone/package.json
           cd .next/standalone && zip -r ../../deploy.zip . -x "*.map"
 
       - name: Upload artifact
@@ -63,6 +64,13 @@ jobs:
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set startup command
+        run: |
+          az webapp config set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group rg-calsync \
+            --startup-file "node server.js"
 
       - name: Deploy to Azure Web App
         run: |
